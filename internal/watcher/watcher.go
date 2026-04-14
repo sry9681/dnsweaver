@@ -13,6 +13,7 @@ package watcher
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -177,15 +178,25 @@ func (w *Watcher) watchLoop(ctx context.Context) {
 	}
 }
 
+// watch dispatches to the appropriate stream topology based on mode.
+// ModeBoth uses two independent subscriptions (watchBoth) to sidestep
+// Docker's inconsistent cross-type action-filter semantics across daemon
+// and socket-proxy versions.
 func (w *Watcher) watch(ctx context.Context) error {
-	rawClient := w.dockerClient.RawClient()
-	isSwarm := w.dockerClient.IsSwarm()
+	mode := w.dockerClient.Mode()
+	if mode == docker.ModeBoth {
+		return w.watchBoth(ctx)
+	}
+	return w.watchSingle(ctx, mode)
+}
 
-	// Build event filters based on mode
-	filterArgs := w.buildEventFilters(isSwarm)
+// watchSingle subscribes to a single event stream filtered for one mode.
+func (w *Watcher) watchSingle(ctx context.Context, mode docker.Mode) error {
+	rawClient := w.dockerClient.RawClient()
+	filterArgs := w.buildEventFilters(mode)
 
 	w.logger.Debug("subscribing to docker events",
-		slog.Bool("swarm_mode", isSwarm),
+		slog.String("mode", mode.String()),
 		slog.Any("filters", filterArgs),
 	)
 
@@ -207,24 +218,84 @@ func (w *Watcher) watch(ctx context.Context) error {
 	}
 }
 
-func (w *Watcher) buildEventFilters(isSwarm bool) filters.Args {
+// watchBoth subscribes to service and container event streams independently
+// and merges them into a single dispatch loop.
+//
+// Why two streams instead of one combined filter: Docker's events endpoint
+// applies the action filter globally across all requested types. With
+// {type=service,container, event=create,update,remove,start,stop,die,destroy}
+// some daemon/proxy combinations cross-product the filter and drop events
+// whose (type, action) pair isn't valid — e.g. service "start" or container
+// "update" — but others silently deliver nothing. Running two streams with
+// narrow, type-specific filters is unambiguous and works identically across
+// daemon versions.
+//
+// Reconnect contract: if either stream errors, we tear both down (via the
+// derived ctx's cancel) and return the error. watchLoop then handles the
+// reconnect delay and re-enters watch(), which re-establishes both streams.
+//
+// Task-container churn: the container stream will receive start/stop/die/
+// destroy events for Swarm task-containers during rolling updates. These
+// pass through handleEvent and trigger a debounced reconcile, but
+// ListWorkloads filters task-containers out, so the reconcile is a no-op.
+// The debouncer (default 2s) absorbs bursts; on very large clusters with
+// frequent deployments, operators can raise DebounceInterval.
+func (w *Watcher) watchBoth(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	rawClient := w.dockerClient.RawClient()
+
+	w.logger.Debug("subscribing to docker events (both streams)",
+		slog.String("mode", docker.ModeBoth.String()),
+	)
+
+	svcEv, svcErr := rawClient.Events(ctx, events.ListOptions{
+		Filters: w.buildEventFilters(docker.ModeSwarm),
+	})
+	ctrEv, ctrErr := rawClient.Events(ctx, events.ListOptions{
+		Filters: w.buildEventFilters(docker.ModeStandalone),
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case err := <-svcErr:
+			return fmt.Errorf("service event stream: %w", err)
+
+		case err := <-ctrErr:
+			return fmt.Errorf("container event stream: %w", err)
+
+		case ev := <-svcEv:
+			w.handleEvent(ev)
+
+		case ev := <-ctrEv:
+			w.handleEvent(ev)
+		}
+	}
+}
+
+// buildEventFilters returns the event filter set for a single-stream mode.
+// ModeBoth is intentionally not handled here — it uses two single-stream
+// subscriptions composed in watchBoth.
+func (w *Watcher) buildEventFilters(mode docker.Mode) filters.Args {
 	filterArgs := filters.NewArgs()
 
-	if isSwarm {
-		// Swarm mode: watch service events
+	switch mode {
+	case docker.ModeSwarm:
 		filterArgs.Add("type", string(events.ServiceEventType))
 		filterArgs.Add("event", "create")
 		filterArgs.Add("event", "update")
 		filterArgs.Add("event", "remove")
-	} else {
-		// Standalone mode: watch container events
+	case docker.ModeStandalone:
 		filterArgs.Add("type", string(events.ContainerEventType))
 		filterArgs.Add("event", "start")
 		filterArgs.Add("event", "stop")
 		filterArgs.Add("event", "die")
 		filterArgs.Add("event", "destroy")
 	}
-
 	return filterArgs
 }
 

@@ -65,7 +65,7 @@ type GlobalConfig struct {
 
 	// Docker connection
 	DockerHost string // Docker socket path or TCP URL
-	DockerMode string // auto, swarm, standalone
+	DockerMode string // auto, swarm, standalone, both
 
 	// Kubernetes settings
 	K8sKubeconfig        string // Path to kubeconfig file; empty = in-cluster
@@ -195,10 +195,10 @@ func loadGlobalConfig() (*GlobalConfig, []*ConfigError) {
 	// Validate Docker mode
 	cfg.DockerMode = strings.ToLower(cfg.DockerMode)
 	switch cfg.DockerMode {
-	case "auto", "swarm", "standalone":
+	case "auto", "swarm", "standalone", "both":
 		// Valid
 	default:
-		errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", cfg.DockerMode), "Must be one of: auto, swarm, standalone", "DNSWEAVER_DOCKER_MODE=auto"))
+		errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", cfg.DockerMode), "Must be one of: auto, swarm, standalone, both", "DNSWEAVER_DOCKER_MODE=auto"))
 	}
 
 	// Parse DRY_RUN

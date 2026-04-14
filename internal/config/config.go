@@ -224,7 +224,7 @@ func (c *Config) DockerHost() string {
 	return c.Global.DockerHost
 }
 
-// DockerMode returns the Docker mode (auto/swarm/standalone).
+// DockerMode returns the Docker mode (auto/swarm/standalone/both).
 func (c *Config) DockerMode() string {
 	return c.Global.DockerMode
 }

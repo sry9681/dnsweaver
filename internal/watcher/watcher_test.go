@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/events"
+
+	"gitlab.bluewillows.net/root/dnsweaver/internal/docker"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -379,7 +381,7 @@ func TestWatcher_Stop_CancelsPendingDebounce(t *testing.T) {
 func TestWatcher_BuildEventFilters_SwarmMode(t *testing.T) {
 	w := New(nil, func() {})
 
-	filters := w.buildEventFilters(true) // isSwarm = true
+	filters := w.buildEventFilters(docker.ModeSwarm)
 
 	// Should filter for service events
 	typeFilters := filters.Get("type")
@@ -404,7 +406,7 @@ func TestWatcher_BuildEventFilters_SwarmMode(t *testing.T) {
 func TestWatcher_BuildEventFilters_StandaloneMode(t *testing.T) {
 	w := New(nil, func() {})
 
-	filters := w.buildEventFilters(false) // isSwarm = false
+	filters := w.buildEventFilters(docker.ModeStandalone)
 
 	// Should filter for container events
 	typeFilters := filters.Get("type")
@@ -422,6 +424,21 @@ func TestWatcher_BuildEventFilters_StandaloneMode(t *testing.T) {
 		if !expectedEvents[e] {
 			t.Errorf("unexpected event filter: %s", e)
 		}
+	}
+}
+
+// TestWatcher_BuildEventFilters_BothMode pins that ModeBoth returns empty
+// filters from buildEventFilters itself — it's never called directly for
+// ModeBoth. watchBoth composes two single-mode filter sets. This test
+// protects against a future regression where someone adds a ModeBoth case
+// that silently OR-combines both type filters (which as documented in
+// watchBoth is unreliable across daemon/proxy versions).
+func TestWatcher_BuildEventFilters_BothMode(t *testing.T) {
+	w := New(nil, func() {})
+	f := w.buildEventFilters(docker.ModeBoth)
+	if len(f.Get("type")) != 0 || len(f.Get("event")) != 0 {
+		t.Errorf("buildEventFilters(ModeBoth) should be empty (watchBoth composes two single-mode streams); got types=%v events=%v",
+			f.Get("type"), f.Get("event"))
 	}
 }
 

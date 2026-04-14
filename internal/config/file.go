@@ -75,7 +75,7 @@ type FileReconcilerConfig struct {
 // FileDockerConfig holds Docker connection settings.
 type FileDockerConfig struct {
 	Host string `yaml:"host,omitempty"` // unix:///var/run/docker.sock or tcp://...
-	Mode string `yaml:"mode,omitempty"` // auto, swarm, standalone
+	Mode string `yaml:"mode,omitempty"` // auto, swarm, standalone, both
 }
 
 // FileKubernetesConfig holds Kubernetes watcher settings.

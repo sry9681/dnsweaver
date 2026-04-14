@@ -40,7 +40,7 @@ func validateConfig(cfg *Config) []*ConfigError {
 	}
 
 	switch cfg.Global.DockerMode {
-	case "auto", "swarm", "standalone":
+	case "auto", "swarm", "standalone", "both":
 		// Valid
 	case "":
 		// Will use default
@@ -48,7 +48,7 @@ func validateConfig(cfg *Config) []*ConfigError {
 		errs = append(errs, configErrFull(
 			"docker_mode",
 			fmt.Sprintf("invalid value %q", cfg.Global.DockerMode),
-			"Must be one of: auto, swarm, standalone",
+			"Must be one of: auto, swarm, standalone, both",
 			"DNSWEAVER_DOCKER_MODE=auto",
 		))
 	}
