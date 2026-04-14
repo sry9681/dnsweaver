@@ -25,12 +25,19 @@ func WithHost(host string) Option {
 // WithMode sets the Docker operation mode.
 //
 // Modes:
-//   - ModeAuto: Auto-detect based on Docker daemon state (default)
-//   - ModeSwarm: Force Swarm mode (fails if Swarm is not active or node is not a manager)
-//   - ModeStandalone: Force standalone mode (ignores Swarm state)
+//   - ModeAuto: Auto-detect based on Docker daemon state (default).
+//     Never selects Both — opt in explicitly.
+//   - ModeSwarm: Force Swarm mode (fails if Swarm is not active or node is not a manager).
+//   - ModeStandalone: Force standalone mode (ignores Swarm state).
+//   - ModeBoth: Discover Swarm services AND standalone containers. Requires
+//     Swarm active and manager role. Swarm task-containers are filtered out
+//     to avoid double-counting with their parent service.
 //
 // Use ModeSwarm when you want to fail fast if Swarm is not available.
 // Use ModeStandalone to explicitly ignore Swarm even if available.
+// Use ModeBoth on a manager that also hosts user-run standalone containers
+// (e.g. single-node homelab deployments mixing a Swarm stack with
+// `docker run` containers).
 func WithMode(mode Mode) Option {
 	return func(c *Client) {
 		c.mode = mode

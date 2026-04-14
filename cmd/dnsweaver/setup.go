@@ -99,6 +99,8 @@ func parseDockerMode(mode string) docker.Mode {
 		return docker.ModeSwarm
 	case "standalone":
 		return docker.ModeStandalone
+	case "both":
+		return docker.ModeBoth
 	default:
 		return docker.ModeAuto
 	}

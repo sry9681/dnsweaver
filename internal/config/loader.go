@@ -210,10 +210,10 @@ func mergeGlobalConfig(base *GlobalConfig) (*GlobalConfig, []*ConfigError) {
 	if v := getEnv("DNSWEAVER_DOCKER_MODE"); v != "" {
 		cfg.DockerMode = strings.ToLower(v)
 		switch cfg.DockerMode {
-		case "auto", "swarm", "standalone":
+		case "auto", "swarm", "standalone", "both":
 			// Valid
 		default:
-			errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", v), "Must be one of: auto, swarm, standalone", "DNSWEAVER_DOCKER_MODE=auto"))
+			errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", v), "Must be one of: auto, swarm, standalone, both", "DNSWEAVER_DOCKER_MODE=auto"))
 		}
 	}
 

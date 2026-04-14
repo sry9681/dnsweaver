@@ -73,7 +73,7 @@ type GlobalConfig struct {
 
 	// Docker connection
 	DockerHost           string        // Docker socket path or TCP URL
-	DockerMode           string        // auto, swarm, standalone
+	DockerMode           string        // auto, swarm, standalone, both
 	DockerConnectTimeout time.Duration // Max time to keep retrying the initial Docker connect before failing hard; 0 = fail immediately
 
 	// Kubernetes settings
@@ -270,10 +270,10 @@ func loadGlobalConfig() (*GlobalConfig, []*ConfigError) {
 	// Validate Docker mode
 	cfg.DockerMode = strings.ToLower(cfg.DockerMode)
 	switch cfg.DockerMode {
-	case "auto", "swarm", "standalone":
+	case "auto", "swarm", "standalone", "both":
 		// Valid
 	default:
-		errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", cfg.DockerMode), "Must be one of: auto, swarm, standalone", "DNSWEAVER_DOCKER_MODE=auto"))
+		errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", cfg.DockerMode), "Must be one of: auto, swarm, standalone, both", "DNSWEAVER_DOCKER_MODE=auto"))
 	}
 
 	// Parse DRY_RUN

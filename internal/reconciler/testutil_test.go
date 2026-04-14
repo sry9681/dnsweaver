@@ -51,6 +51,31 @@ func (m *testMockWorkloadLister) AddWorkload(name string, labels map[string]stri
 	})
 }
 
+// AddWorkloadAs adds a workload with a specific Kind. Used by mixed-mode
+// tests that exercise service + container coexistence and removal orders.
+func (m *testMockWorkloadLister) AddWorkloadAs(name string, kind workload.Kind, labels map[string]string) {
+	m.workloads = append(m.workloads, workload.Workload{
+		ID:       "id-" + name,
+		Name:     name,
+		Labels:   labels,
+		Platform: m.platform,
+		Kind:     kind,
+	})
+}
+
+// RemoveWorkloadByName drops a workload from the lister's state, simulating
+// the workload disappearing from Docker (service removed or container
+// destroyed) between reconciles.
+func (m *testMockWorkloadLister) RemoveWorkloadByName(name string) {
+	out := m.workloads[:0]
+	for _, w := range m.workloads {
+		if w.Name != name {
+			out = append(out, w)
+		}
+	}
+	m.workloads = out
+}
+
 func (m *testMockWorkloadLister) SetListError(err error) {
 	m.listErr = err
 }

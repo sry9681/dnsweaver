@@ -41,12 +41,28 @@ type Mode string
 
 const (
 	// ModeAuto auto-detects whether Docker is in Swarm or standalone mode.
+	// Auto never selects Both — it's an opt-in for managers that also host
+	// standalone containers, and changing auto's behavior would be a silent
+	// breaking change for existing Swarm users.
 	ModeAuto Mode = "auto"
 	// ModeSwarm forces Swarm mode operation.
 	ModeSwarm Mode = "swarm"
 	// ModeStandalone forces standalone container mode operation.
 	ModeStandalone Mode = "standalone"
+	// ModeBoth lists Swarm services AND standalone containers on the same
+	// node. Requires an active Swarm with the local node as manager.
+	// Swarm task-containers (containers belonging to a service) are filtered
+	// out to avoid double-counting.
+	ModeBoth Mode = "both"
 )
+
+// swarmTaskLabel is the Docker-managed label Swarm places on every container
+// that is a task of a service. We use its presence to filter task-containers
+// out of standalone listings so they don't double-count with their parent
+// service. Chosen over com.docker.swarm.task.id because "owned by a service"
+// is the semantic we want — an orphaned task without a service.id is not
+// something we'd double-count anyway (it has no parent in ListServices).
+const swarmTaskLabel = "com.docker.swarm.service.id"
 
 // String returns the string representation of the mode.
 func (m Mode) String() string {
@@ -77,6 +93,12 @@ type Client struct {
 	host           string
 	cleanupOnStop  bool          // If true, only list running containers; if false, include stopped
 	connectTimeout time.Duration // Max time to retry the initial connect before failing hard; 0 = fail immediately
+
+	// swarmActive is a snapshot of Swarm participation taken at client init.
+	// It is intentionally not refreshed: if the Swarm is torn down at runtime,
+	// the task-container filter keeps running (fail-safe — no risk of Swarm
+	// task-containers leaking into the workload list until the next restart).
+	swarmActive bool
 }
 
 // NewClient creates a new Docker client with the given options.
@@ -220,6 +242,8 @@ func (c *Client) initializeMode(ctx context.Context) error {
 		slog.String("node_id", info.Swarm.NodeID),
 	)
 
+	c.swarmActive = isSwarmActive
+
 	switch c.mode {
 	case ModeAuto:
 		if isSwarmActive {
@@ -242,6 +266,15 @@ func (c *Client) initializeMode(ctx context.Context) error {
 
 	case ModeStandalone:
 		c.detectedMode = ModeStandalone
+
+	case ModeBoth:
+		if !isSwarmActive {
+			return ErrSwarmNotActive
+		}
+		if !isManager {
+			return ErrNotManager
+		}
+		c.detectedMode = ModeBoth
 	}
 
 	return nil
@@ -254,8 +287,20 @@ func (c *Client) Mode() Mode {
 }
 
 // IsSwarm returns true if the client is operating in Swarm mode.
+// Note: this returns false for ModeBoth even when Swarm is active locally.
+// Use IsSwarmActive() when you need to know about local Swarm participation
+// independent of listing behavior.
 func (c *Client) IsSwarm() bool {
 	return c.detectedMode == ModeSwarm
+}
+
+// IsSwarmActive reports whether the local daemon participates in an active
+// Swarm as a manager, independent of configured mode. Use this when the
+// decision depends on local Swarm presence rather than on Swarm-only listing
+// semantics — for example, deciding whether to filter out Swarm task-containers
+// from a standalone container listing.
+func (c *Client) IsSwarmActive() bool {
+	return c.swarmActive
 }
 
 // Close closes the underlying Docker client connection.
@@ -296,9 +341,10 @@ type Container struct {
 }
 
 // ListServices returns all Swarm services with their labels.
-// Returns ErrNotSwarmMode if not in Swarm mode.
+// Returns ErrNotSwarmMode if the client is not in a mode that lists services
+// (ModeSwarm or ModeBoth).
 func (c *Client) ListServices(ctx context.Context) ([]Service, error) {
-	if c.detectedMode != ModeSwarm {
+	if c.detectedMode != ModeSwarm && c.detectedMode != ModeBoth {
 		return nil, ErrNotSwarmMode
 	}
 
@@ -327,9 +373,16 @@ func (c *Client) ListServices(ctx context.Context) ([]Service, error) {
 // If cleanupOnStop is true (default), only running containers are returned.
 // If cleanupOnStop is false, both running and stopped containers are returned,
 // allowing DNS records to persist through stop/restart cycles.
-// Returns ErrNotStandaloneMode if in Swarm mode.
+// Returns ErrNotStandaloneMode if the client is not in a mode that lists
+// containers (ModeStandalone or ModeBoth).
+//
+// This method is semantically pure: it returns every container matching the
+// status filter, including Swarm task-containers. Callers that want a
+// "standalone only" view (e.g. the ListWorkloads path in ModeBoth or in
+// ModeStandalone on a Swarm manager) must post-filter with
+// filterSwarmTaskContainers.
 func (c *Client) ListContainers(ctx context.Context) ([]Container, error) {
-	if c.detectedMode != ModeStandalone {
+	if c.detectedMode != ModeStandalone && c.detectedMode != ModeBoth {
 		return nil, ErrNotStandaloneMode
 	}
 
@@ -389,8 +442,9 @@ func normalizeContainerName(names []string) string {
 }
 
 // GetServiceLabels returns the labels for a specific Swarm service by ID.
+// Returns ErrNotSwarmMode if the client is not in ModeSwarm or ModeBoth.
 func (c *Client) GetServiceLabels(ctx context.Context, serviceID string) (map[string]string, error) {
-	if c.detectedMode != ModeSwarm {
+	if c.detectedMode != ModeSwarm && c.detectedMode != ModeBoth {
 		return nil, ErrNotSwarmMode
 	}
 
@@ -403,8 +457,9 @@ func (c *Client) GetServiceLabels(ctx context.Context, serviceID string) (map[st
 }
 
 // GetContainerLabels returns the labels for a specific container by ID.
+// Returns ErrNotStandaloneMode if the client is not in ModeStandalone or ModeBoth.
 func (c *Client) GetContainerLabels(ctx context.Context, containerID string) (map[string]string, error) {
-	if c.detectedMode != ModeStandalone {
+	if c.detectedMode != ModeStandalone && c.detectedMode != ModeBoth {
 		return nil, ErrNotStandaloneMode
 	}
 
@@ -416,49 +471,113 @@ func (c *Client) GetContainerLabels(ctx context.Context, containerID string) (ma
 	return ctr.Config.Labels, nil
 }
 
-// ListWorkloads returns all workloads (services in Swarm mode, containers in standalone).
-// This provides a unified interface regardless of Docker mode.
-func (c *Client) ListWorkloads(ctx context.Context) ([]Workload, error) {
-	if c.detectedMode == ModeSwarm {
-		services, err := c.ListServices(ctx)
-		if err != nil {
-			return nil, err
+// filterSwarmTaskContainers drops any container carrying the Swarm
+// service-id label. Task-containers would otherwise double-count with their
+// parent service (and churn on every rescheduling event). The function also
+// patches a pre-existing issue where ModeStandalone on a Swarm manager node
+// would pick up task-containers as if they were user-run standalone
+// containers.
+//
+// Semantic choice: we filter on com.docker.swarm.service.id (not task.id).
+// A task without a service.id is an orphaned task with no matching entry in
+// ListServices, so there is no double-count to prevent and we let it through.
+func filterSwarmTaskContainers(in []Container) []Container {
+	out := make([]Container, 0, len(in))
+	for _, ctr := range in {
+		if _, isTask := ctr.Labels[swarmTaskLabel]; isTask {
+			continue
 		}
-
-		workloads := make([]Workload, 0, len(services))
-		for _, svc := range services {
-			workloads = append(workloads, Workload{
-				ID:     svc.ID,
-				Name:   svc.Name,
-				Labels: svc.Labels,
-				Type:   WorkloadTypeService,
-			})
-		}
-		return workloads, nil
+		out = append(out, ctr)
 	}
+	return out
+}
 
-	containers, err := c.ListContainers(ctx)
-	if err != nil {
-		return nil, err
+// composeWorkloads builds the unified workload slice from service and
+// container listings. Pure function: all IO has already happened. If
+// filterTasks is true, Swarm task-containers (those with the service-id
+// label) are removed from the container list before composition.
+//
+// Services are emitted first, then containers, for stable ordering.
+func composeWorkloads(services []Service, containers []Container, filterTasks bool) []Workload {
+	if filterTasks {
+		containers = filterSwarmTaskContainers(containers)
 	}
-
-	workloads := make([]Workload, 0, len(containers))
+	out := make([]Workload, 0, len(services)+len(containers))
+	for _, svc := range services {
+		out = append(out, Workload{
+			ID:     svc.ID,
+			Name:   svc.Name,
+			Labels: svc.Labels,
+			Type:   WorkloadTypeService,
+		})
+	}
 	for _, ctr := range containers {
-		workloads = append(workloads, Workload{
+		out = append(out, Workload{
 			ID:     ctr.ID,
 			Name:   ctr.Name,
 			Labels: ctr.Labels,
 			Type:   WorkloadTypeContainer,
 		})
 	}
-	return workloads, nil
+	return out
+}
+
+// ListWorkloads returns all workloads as a unified slice:
+//   - ModeSwarm: Swarm services only
+//   - ModeStandalone: standalone containers only
+//   - ModeBoth: services + standalone containers (task-containers filtered)
+//
+// Services are returned first, then containers, for stable ordering across
+// reconciles (useful in tests and in log comparisons).
+//
+// Failure policy: fail closed. If either listing call returns an error in
+// ModeBoth, the whole call errors out. Returning a partial list would let
+// the reconciler treat the missing side as "all workloads gone" and mass-
+// delete their DNS records. The orphan-cleanup circuit breaker
+// (internal/reconciler/orphan.go) is defense-in-depth; fail-closed here is
+// primary protection.
+func (c *Client) ListWorkloads(ctx context.Context) ([]Workload, error) {
+	var services []Service
+	var containers []Container
+
+	if c.detectedMode == ModeSwarm || c.detectedMode == ModeBoth {
+		s, err := c.ListServices(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing services: %w", err)
+		}
+		services = s
+	}
+
+	if c.detectedMode == ModeStandalone || c.detectedMode == ModeBoth {
+		ctrs, err := c.ListContainers(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing containers: %w", err)
+		}
+		containers = ctrs
+	}
+
+	// When the local daemon participates in an active Swarm, containers may
+	// include task-containers owned by services. Filter them out regardless
+	// of configured mode — correctness-preserving in both ModeBoth and
+	// ModeStandalone-on-manager.
+	return composeWorkloads(services, containers, c.swarmActive), nil
 }
 
 // GetWorkloadLabels returns the labels for a specific workload by ID.
-// Automatically uses the correct method based on current mode.
+// Automatically uses the correct method based on current mode. In ModeBoth
+// it tries services first and falls back to containers, because the ID
+// namespaces are separate and we don't know which one the caller has.
 func (c *Client) GetWorkloadLabels(ctx context.Context, workloadID string) (map[string]string, error) {
-	if c.detectedMode == ModeSwarm {
+	switch c.detectedMode {
+	case ModeSwarm:
 		return c.GetServiceLabels(ctx, workloadID)
+	case ModeStandalone:
+		return c.GetContainerLabels(ctx, workloadID)
+	case ModeBoth:
+		if labels, err := c.GetServiceLabels(ctx, workloadID); err == nil {
+			return labels, nil
+		}
+		return c.GetContainerLabels(ctx, workloadID)
 	}
-	return c.GetContainerLabels(ctx, workloadID)
+	panic("unreachable: detectedMode invariant violated")
 }

@@ -75,7 +75,7 @@ type FileReconcilerConfig struct {
 // FileDockerConfig holds Docker connection settings.
 type FileDockerConfig struct {
 	Host           string `yaml:"host,omitempty"`            // unix:///var/run/docker.sock or tcp://...
-	Mode           string `yaml:"mode,omitempty"`            // auto, swarm, standalone
+	Mode           string `yaml:"mode,omitempty"`            // auto, swarm, standalone, both
 	ConnectTimeout string `yaml:"connect_timeout,omitempty"` // Max time to retry the initial connect before failing hard (e.g. 30s); "0" fails immediately
 }
 

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`docker_mode: both`** — on a Swarm manager, simultaneously discover
+  Swarm services and standalone containers. Swarm task-containers are
+  filtered out via the `com.docker.swarm.service.id` label to prevent
+  double-counting with their parent service. Event watching uses two
+  independent `/events` subscriptions (one per type) to avoid Docker's
+  inconsistent cross-type action-filter semantics across daemon and
+  socket-proxy versions. See `docs/deployment/mixed-mode.md`.
+- `Client.IsSwarmActive()` — reports local Swarm participation
+  independent of listing behavior. Used by the task-container filter so
+  the correctness fix applies to both `ModeBoth` and legacy
+  `ModeStandalone`-on-manager configurations.
+
+### Fixed
+- **`docker_mode: standalone` on a Swarm manager** no longer
+  double-counts Swarm task-containers alongside their parent service's
+  records. The filter is gated on local Swarm liveness, not on
+  configured mode, so any manager node running in `standalone` mode
+  inherits the fix without configuration changes.
+
+### Notes
+- `docker_mode: auto` behavior is **unchanged**: managers continue to
+  auto-detect to Swarm-only. To opt in to mixed discovery, set
+  `docker_mode: both` explicitly.
+- `ListWorkloads` fails closed on partial listing failure in `both`
+  mode: if either `/services` or `/containers/json` errors, the whole
+  call errors and reconcile is skipped. Returning a partial list would
+  let the reconciler mass-delete records for the failing side.
+
 ## [3.0.0] - 2026-09-17
 
 This major release changes the management listener to loopback by default. Before upgrading, review remote health probes and Prometheus scrapers. Prefer the bundled local probes. If remote access is required, set `DNSWEAVER_HEALTH_ADDRESS=0.0.0.0` and `DNSWEAVER_HEALTH_ALLOW_NETWORK=true`, then restrict access with a NetworkPolicy, firewall or equivalent control. The opt-in does not provide authentication.

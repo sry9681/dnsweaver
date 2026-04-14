@@ -21,6 +21,7 @@ func TestModeConstants(t *testing.T) {
 		{ModeAuto, "auto"},
 		{ModeSwarm, "swarm"},
 		{ModeStandalone, "standalone"},
+		{ModeBoth, "both"},
 	}
 
 	for _, tt := range tests {

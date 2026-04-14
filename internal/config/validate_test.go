@@ -121,6 +121,52 @@ func TestValidateConfig_DuplicateProviderNames(t *testing.T) {
 	}
 }
 
+// TestValidateConfig_DockerMode_Both pins that "both" is accepted for
+// docker_mode. Guards against regression when touching the allowed value
+// list and ensures the validate.go switch stays aligned with the real
+// docker.ModeBoth runtime value.
+func TestValidateConfig_DockerMode_Both(t *testing.T) {
+	cfg := &Config{
+		Global: &GlobalConfig{
+			LogLevel:   "info",
+			LogFormat:  "text",
+			DockerMode: "both",
+			Platform:   "docker",
+		},
+	}
+	errs := validateConfig(cfg)
+	for _, err := range errs {
+		if containsSubstring(err.Error(), "docker_mode") {
+			t.Errorf("docker_mode=both should be valid, got error: %v", err)
+		}
+	}
+}
+
+// TestValidateConfig_DockerMode_Invalid pins that unexpected values remain
+// rejected, so the expanded allow-list can't accidentally turn into a
+// permissive accept-anything switch.
+func TestValidateConfig_DockerMode_Invalid(t *testing.T) {
+	cfg := &Config{
+		Global: &GlobalConfig{
+			LogLevel:   "info",
+			LogFormat:  "text",
+			DockerMode: "bogus",
+			Platform:   "docker",
+		},
+	}
+	errs := validateConfig(cfg)
+	found := false
+	for _, err := range errs {
+		if containsSubstring(err.Error(), "docker_mode") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected docker_mode validation error for invalid value, got %v", errs)
+	}
+}
+
 func TestValidationError_SingleError(t *testing.T) {
 	err := &ValidationError{Errors: []*ConfigError{configErr("test_field", "single error message")}}
 	got := err.Error()

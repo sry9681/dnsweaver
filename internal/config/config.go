@@ -245,7 +245,7 @@ func (c *Config) DockerConnectTimeout() time.Duration {
 	return c.Global.DockerConnectTimeout
 }
 
-// DockerMode returns the Docker mode (auto/swarm/standalone).
+// DockerMode returns the Docker mode (auto/swarm/standalone/both).
 func (c *Config) DockerMode() string {
 	return c.Global.DockerMode
 }

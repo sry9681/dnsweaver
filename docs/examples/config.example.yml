@@ -59,7 +59,16 @@ reconciler:
 # Docker connection settings
 docker:
   host: unix:///var/run/docker.sock  # Docker socket or TCP URL
-  mode: auto                          # auto, swarm, or standalone
+  mode: auto                          # auto | swarm | standalone | both
+                                      # both: pick up Swarm services AND
+                                      # standalone containers on a Swarm
+                                      # manager. Requires Swarm active +
+                                      # manager role. Socket must allow:
+                                      #   GET /info, /services, /services/{id},
+                                      #       /containers/json,
+                                      #       /containers/{id}/json, /events
+                                      # /events is opened twice in 'both' mode.
+                                      # See docs/docker/mixed-mode.md.
 
 # Health and metrics server
 server:
