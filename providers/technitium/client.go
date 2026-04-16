@@ -2,12 +2,14 @@
 package technitium
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -35,12 +37,129 @@ type apiRData struct {
 	Port      int    `json:"port,omitempty"`     // For SRV records
 	SrvTarget string `json:"target,omitempty"`   // For SRV records
 	// HTTPS/SVCB record fields
-	SvcPriority   int    `json:"svcPriority,omitempty"`   // For HTTPS/SVCB records
-	SvcTargetName string `json:"svcTargetName,omitempty"` // For HTTPS/SVCB records ("." = self)
-	SvcParams     string `json:"svcParams,omitempty"`     // For HTTPS/SVCB records (e.g., "alpn|h2")
+	SvcPriority   int       `json:"svcPriority,omitempty"`   // For HTTPS/SVCB records
+	SvcTargetName string    `json:"svcTargetName,omitempty"` // For HTTPS/SVCB records ("." = self)
+	SvcParams     svcParams `json:"svcParams,omitempty"`     // For HTTPS/SVCB records (see svcParams docs)
 }
 
-// Note: older Technitium versions might represent svcParams differently; keep parsing flexible.
+// svcParams is the normalized pipe-separated representation of HTTPS/SVCB
+// service parameters (e.g. "alpn|h2 port|443"). Technitium's API is
+// inconsistent across endpoints and versions:
+//
+//   - Older servers and the add/delete query-string endpoints use/accept the
+//     pipe form: svcParams=alpn|h2
+//   - Newer zones/records/get responses return it as a nested JSON object:
+//     {"alpn":{"alpnIds":["h2"]},"port":{"port":443}}
+//   - Some responses omit it entirely or return null
+//
+// Any of those must parse without error, otherwise the whole record list
+// (including A/TXT records we DO manage) fails to deserialize and the
+// reconciler cannot run. We normalize to the pipe form on read so all
+// downstream consumers — extractALPN, ProviderID construction, add/delete
+// round-trips — continue to work with a single representation.
+type svcParams string
+
+// UnmarshalJSON accepts string, object, and null forms from the Technitium
+// API and stores the pipe-separated normalized value.
+func (s *svcParams) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*s = ""
+		return nil
+	}
+	// String form: "alpn|h2"
+	if data[0] == '"' {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("svcParams string: %w", err)
+		}
+		*s = svcParams(raw)
+		return nil
+	}
+	// Object form: {"alpn":{"alpnIds":["h2"]},"port":{"port":443},...}
+	// We only need to round-trip known keys safely. Unknown keys are
+	// preserved as key|<compact-json> so record identity (ProviderID)
+	// stays deterministic even for parameter types we don't explicitly
+	// understand — rather than silently dropping them.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("svcParams object: %w", err)
+	}
+	*s = svcParams(flattenSvcParamsObject(obj))
+	return nil
+}
+
+// MarshalJSON is defined so tests that round-trip apiRData through JSON
+// produce a well-formed document. On the wire we only serialize to
+// Technitium via query strings (see AddHTTPSRecord), never via JSON body.
+func (s svcParams) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(s))
+}
+
+// String returns the pipe-separated form so callers can treat svcParams
+// as if it were a plain string.
+func (s svcParams) String() string { return string(s) }
+
+// flattenSvcParamsObject converts Technitium's object-form svcParams into
+// the pipe-separated string form that the rest of dnsweaver expects.
+//
+// Known shapes:
+//
+//	{"alpn":{"alpnIds":["h2","h3"]}}   → "alpn|h2,h3"
+//	{"port":{"port":443}}              → "port|443"
+//	{"ipv4hint":{"addresses":["1.2.3.4"]}} → "ipv4hint|1.2.3.4"
+//	{"ipv6hint":{"addresses":["::1"]}} → "ipv6hint|::1"
+//
+// Unknown keys are serialized as key|<compact-json-of-value> so record
+// identity remains deterministic across reconciles. Keys are emitted in
+// lexicographic order so the output is stable regardless of map
+// iteration order — stability matters because the result feeds into
+// ProviderID.
+func flattenSvcParamsObject(obj map[string]json.RawMessage) string {
+	if len(obj) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		val := obj[k]
+		switch k {
+		case "alpn":
+			var v struct {
+				ALPNIDs []string `json:"alpnIds"`
+			}
+			if err := json.Unmarshal(val, &v); err == nil && len(v.ALPNIDs) > 0 {
+				parts = append(parts, "alpn|"+strings.Join(v.ALPNIDs, ","))
+				continue
+			}
+		case "port":
+			var v struct {
+				Port int `json:"port"`
+			}
+			if err := json.Unmarshal(val, &v); err == nil && v.Port != 0 {
+				parts = append(parts, fmt.Sprintf("port|%d", v.Port))
+				continue
+			}
+		case "ipv4hint", "ipv6hint":
+			var v struct {
+				Addresses []string `json:"addresses"`
+			}
+			if err := json.Unmarshal(val, &v); err == nil && len(v.Addresses) > 0 {
+				parts = append(parts, k+"|"+strings.Join(v.Addresses, ","))
+				continue
+			}
+		}
+		// Fallback: preserve the key+compact-JSON for determinism. Worst
+		// case this doesn't round-trip into an add/delete call correctly,
+		// but dnsweaver doesn't create unknown svcParam types anyway.
+		parts = append(parts, k+"|"+string(bytes.TrimSpace(val)))
+	}
+	return strings.Join(parts, " ")
+}
 
 // apiResponse is the standard Technitium API response wrapper.
 type apiResponse struct {
