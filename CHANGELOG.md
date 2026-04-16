@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`docker_mode: both`** — on a Swarm manager, simultaneously discover
+  Swarm services and standalone containers. Swarm task-containers are
+  filtered out via the `com.docker.swarm.service.id` label to prevent
+  double-counting with their parent service. Event watching uses two
+  independent `/events` subscriptions (one per type) to avoid Docker's
+  inconsistent cross-type action-filter semantics across daemon and
+  socket-proxy versions. See `docs/deployment/mixed-mode.md`.
+- `Client.IsSwarmActive()` — reports local Swarm participation
+  independent of listing behavior. Used by the task-container filter so
+  the correctness fix applies to both `ModeBoth` and legacy
+  `ModeStandalone`-on-manager configurations.
+
+### Fixed
+- **`docker_mode: standalone` on a Swarm manager** no longer
+  double-counts Swarm task-containers alongside their parent service's
+  records. The filter is gated on local Swarm liveness, not on
+  configured mode, so any manager node running in `standalone` mode
+  inherits the fix without configuration changes.
+- **Technitium HTTPS/SVCB records no longer break zone listing.**
+  Recent Technitium versions return `svcParams` as a nested JSON object
+  (e.g. `{"alpn":{"alpnIds":["h2"]}}`) from `zones/records/get`, while
+  older versions and the add/delete endpoints use the pipe form
+  (`alpn|h2`). The previous string-typed field failed to unmarshal the
+  object form, which aborted the entire zone listing and blocked
+  reconcile for A/TXT records that DNSWeaver manages. `svcParams` now
+  accepts both shapes and normalizes to the pipe form internally;
+  unknown keys are preserved deterministically so record identity
+  stays stable across reconciles.
+
+### Notes
+- `docker_mode: auto` behavior is **unchanged**: managers continue to
+  auto-detect to Swarm-only. To opt in to mixed discovery, set
+  `docker_mode: both` explicitly.
+- `ListWorkloads` fails closed on partial listing failure in `both`
+  mode: if either `/services` or `/containers/json` errors, the whole
+  call errors and reconcile is skipped. Returning a partial list would
+  let the reconciler mass-delete records for the failing side.
+
 ## [1.1.3] - 2026-04-10
 
 ### Security

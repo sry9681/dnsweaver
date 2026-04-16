@@ -146,6 +146,7 @@ nav:
       - deployment/index.md
       - Docker Compose: deployment/docker-compose.md
       - Docker Swarm: deployment/swarm.md
+      - Mixed Mode (Swarm + Standalone): deployment/mixed-mode.md
       - Kubernetes: deployment/kubernetes.md
       - Split-Horizon DNS: deployment/split-horizon.md
       - Dual-Stack (IPv4/IPv6): deployment/dual-stack.md
