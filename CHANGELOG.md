@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records. The filter is gated on local Swarm liveness, not on
   configured mode, so any manager node running in `standalone` mode
   inherits the fix without configuration changes.
+- **Technitium HTTPS/SVCB records no longer break zone listing.**
+  Recent Technitium versions return `svcParams` as a nested JSON object
+  (e.g. `{"alpn":{"alpnIds":["h2"]}}`) from `zones/records/get`, while
+  older versions and the add/delete endpoints use the pipe form
+  (`alpn|h2`). The previous string-typed field failed to unmarshal the
+  object form, which aborted the entire zone listing and blocked
+  reconcile for A/TXT records that DNSWeaver manages. `svcParams` now
+  accepts both shapes and normalizes to the pipe form internally;
+  unknown keys are preserved deterministically so record identity
+  stays stable across reconciles.
 
 ### Notes
 - `docker_mode: auto` behavior is **unchanged**: managers continue to

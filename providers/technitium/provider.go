@@ -201,7 +201,7 @@ func (p *Provider) List(ctx context.Context) ([]provider.Record, error) {
 				HTTPS: &provider.HTTPSData{
 					Priority:   uint16(min(max(0, r.RData.SvcPriority), math.MaxUint16)),
 					TargetName: r.RData.SvcTargetName,
-					ALPN:       extractALPN(r.RData.SvcParams),
+					ALPN:       extractALPN(string(r.RData.SvcParams)),
 				},
 			})
 		}
