@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"gitlab.bluewillows.net/root/dnsweaver/pkg/provider"
-	"gitlab.bluewillows.net/root/dnsweaver/pkg/source"
-	"gitlab.bluewillows.net/root/dnsweaver/pkg/workload"
-	"gitlab.bluewillows.net/root/dnsweaver/sources/traefik"
+	"github.com/maxfield-allison/dnsweaver/pkg/provider"
+	"github.com/maxfield-allison/dnsweaver/pkg/source"
+	"github.com/maxfield-allison/dnsweaver/pkg/workload"
+	"github.com/maxfield-allison/dnsweaver/sources/traefik"
 )
 
 // These tests pin reconciler behavior when a single Docker lister returns

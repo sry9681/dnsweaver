@@ -9,7 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types/events"
 
-	"gitlab.bluewillows.net/root/dnsweaver/internal/docker"
+	"github.com/maxfield-allison/dnsweaver/internal/docker"
 )
 
 func TestDefaultConfig(t *testing.T) {
