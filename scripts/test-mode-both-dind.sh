@@ -33,6 +33,7 @@
 #   scripts/test-mode-both-dind.sh              # full run, all three phases
 #   scripts/test-mode-both-dind.sh --skip-phase3  # skip the worker test
 #   scripts/test-mode-both-dind.sh --keep        # leave everything running
+#   scripts/test-mode-both-dind.sh --image=dnsweaver:dev  # load a host-built image
 #
 set -Eeuo pipefail
 
@@ -55,9 +56,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SKIP_PHASE3=0
 KEEP=0
+PREBUILT_IMAGE=""                    # --image=<ref>: host image to load instead of building in dind
 for arg in "$@"; do
     case "$arg" in
         --skip-phase3) SKIP_PHASE3=1 ;;
+        --image=*) PREBUILT_IMAGE="${arg#--image=}" ;;
         --keep) KEEP=1 ;;
         -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -747,9 +750,17 @@ phase3() {
 start_manager
 start_sink
 
-log "build $DNSWEAVER_TAG inside dind-manager"
-tar --exclude='.git' --exclude='node_modules' -C "$REPO_ROOT" -cf - . | \
-    dm build -q -t "$DNSWEAVER_TAG" --build-arg VERSION=mode-both-dind - >/dev/null
+if [[ -n "$PREBUILT_IMAGE" ]]; then
+    # Nested dind builds need network access for apk; a host-built image
+    # avoids that and tests the exact artifact that will be published.
+    log "load prebuilt $PREBUILT_IMAGE into dind-manager as $DNSWEAVER_TAG"
+    docker save "$PREBUILT_IMAGE" | dm load >/dev/null
+    dm tag "$PREBUILT_IMAGE" "$DNSWEAVER_TAG"
+else
+    log "build $DNSWEAVER_TAG inside dind-manager"
+    tar --exclude='.git' --exclude='node_modules' -C "$REPO_ROOT" -cf - . | \
+        dm build -q -t "$DNSWEAVER_TAG" --build-arg VERSION=mode-both-dind - >/dev/null
+fi
 
 phase1
 phase2
