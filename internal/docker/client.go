@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
@@ -295,8 +296,8 @@ func (c *Client) IsSwarm() bool {
 }
 
 // IsSwarmActive reports whether the local daemon participates in an active
-// Swarm as a manager, independent of configured mode. Use this when the
-// decision depends on local Swarm presence rather than on Swarm-only listing
+// Swarm (as a manager or a worker), independent of configured mode. Use this
+// when the decision depends on local Swarm presence rather than on Swarm-only listing
 // semantics — for example, deciding whether to filter out Swarm task-containers
 // from a standalone container listing.
 func (c *Client) IsSwarmActive() bool {
@@ -565,8 +566,10 @@ func (c *Client) ListWorkloads(ctx context.Context) ([]Workload, error) {
 
 // GetWorkloadLabels returns the labels for a specific workload by ID.
 // Automatically uses the correct method based on current mode. In ModeBoth
-// it tries services first and falls back to containers, because the ID
-// namespaces are separate and we don't know which one the caller has.
+// it tries services first and falls back to containers only when the service
+// lookup reports not-found: the ID namespaces are separate and we don't know
+// which one the caller has, but any other service error (daemon or proxy
+// failure) is returned as-is rather than masked by a container lookup.
 func (c *Client) GetWorkloadLabels(ctx context.Context, workloadID string) (map[string]string, error) {
 	switch c.detectedMode {
 	case ModeSwarm:
@@ -574,10 +577,12 @@ func (c *Client) GetWorkloadLabels(ctx context.Context, workloadID string) (map[
 	case ModeStandalone:
 		return c.GetContainerLabels(ctx, workloadID)
 	case ModeBoth:
-		if labels, err := c.GetServiceLabels(ctx, workloadID); err == nil {
-			return labels, nil
+		labels, err := c.GetServiceLabels(ctx, workloadID)
+		if err == nil || !cerrdefs.IsNotFound(err) {
+			return labels, err
 		}
 		return c.GetContainerLabels(ctx, workloadID)
+	default:
+		return nil, fmt.Errorf("docker client mode %q is not initialized", c.detectedMode)
 	}
-	panic("unreachable: detectedMode invariant violated")
 }

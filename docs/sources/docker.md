@@ -57,6 +57,14 @@ In Swarm mode, dnsweaver watches:
 !!! important
     In Swarm mode, labels must be on the **service**, not individual containers.
 
+### Swarm services and standalone containers together
+
+On a Swarm manager that also runs plain `docker run` / Compose containers,
+set `DNSWEAVER_DOCKER_MODE=both` to discover both kinds in one instance.
+Swarm task-containers are filtered out so they never double-count with their
+service. `auto` never selects this mode. See
+[Mixed Mode](../deployment/mixed-mode.md).
+
 ## Docker Socket Options
 
 ### Direct Mount

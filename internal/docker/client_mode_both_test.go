@@ -191,16 +191,13 @@ func TestComposeWorkloads(t *testing.T) {
 	})
 }
 
-// TestGetWorkloadLabels_ModeBothUnreachablePanic documents the defensive
-// panic for invariant violations. Calling GetWorkloadLabels with an
-// uninitialized detectedMode (a programmer error) must panic so the bug
-// surfaces loudly instead of returning a misleading nil map.
-func TestGetWorkloadLabels_UninitializedModePanics(t *testing.T) {
+// TestGetWorkloadLabels_UninitializedModeErrors verifies an uninitialized
+// detectedMode (a programmer error) surfaces as an error instead of a
+// misleading nil map, without crashing the process from a watcher goroutine.
+func TestGetWorkloadLabels_UninitializedModeErrors(t *testing.T) {
 	c := &Client{detectedMode: Mode("")}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic on uninitialized detectedMode")
-		}
-	}()
-	_, _ = c.GetWorkloadLabels(context.Background(), "x")
+	labels, err := c.GetWorkloadLabels(context.Background(), "x")
+	if err == nil {
+		t.Fatalf("expected error on uninitialized detectedMode, got labels %+v", labels)
+	}
 }

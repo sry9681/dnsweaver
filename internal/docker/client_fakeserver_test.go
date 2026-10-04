@@ -82,6 +82,10 @@ func (f *fakeDaemon) handler() http.Handler {
 
 		switch {
 		case strings.HasPrefix(path, "/services/"):
+			if f.failServices {
+				http.Error(w, "simulated services failure", http.StatusInternalServerError)
+				return
+			}
 			id := strings.TrimPrefix(path, "/services/")
 			if svc, ok := f.serviceByID[id]; ok {
 				writeJSON(w, svc)
@@ -335,6 +339,31 @@ func TestGetWorkloadLabels_ModeBoth_FallsBackToContainer(t *testing.T) {
 	}
 	if labels["dnsweaver.hostname"] != "tools.example.com" {
 		t.Errorf("labels = %+v, want dnsweaver.hostname=tools.example.com", labels)
+	}
+}
+
+// TestGetWorkloadLabels_ModeBoth_ServiceErrorNotMasked verifies the
+// fallback only fires on not-found: a failing service lookup must surface its
+// own error rather than a misleading container lookup result.
+func TestGetWorkloadLabels_ModeBoth_ServiceErrorNotMasked(t *testing.T) {
+	f := &fakeDaemon{
+		info:         swarmActiveInfo(),
+		failServices: true,
+		containerByID: map[string]container.InspectResponse{
+			"svc-1": {
+				ContainerJSONBase: &container.ContainerJSONBase{ID: "svc-1"},
+				Config:            &container.Config{Labels: map[string]string{"dnsweaver.hostname": "wrong.example.com"}},
+			},
+		},
+	}
+	c, _ := newFakeClient(t, f, ModeBoth)
+
+	labels, err := c.GetWorkloadLabels(context.Background(), "svc-1")
+	if err == nil {
+		t.Fatalf("expected service lookup error, got labels %+v", labels)
+	}
+	if !strings.Contains(err.Error(), "inspecting service") {
+		t.Errorf("error = %v, want the service inspect error", err)
 	}
 }
 

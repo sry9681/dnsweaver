@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -269,11 +270,8 @@ func loadGlobalConfig() (*GlobalConfig, []*ConfigError) {
 
 	// Validate Docker mode
 	cfg.DockerMode = strings.ToLower(cfg.DockerMode)
-	switch cfg.DockerMode {
-	case "auto", "swarm", "standalone", "both":
-		// Valid
-	default:
-		errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", cfg.DockerMode), "Must be one of: auto, swarm, standalone, both", "DNSWEAVER_DOCKER_MODE=auto"))
+	if !isValidDockerMode(cfg.DockerMode) {
+		errs = append(errs, configErrFull("DNSWEAVER_DOCKER_MODE", fmt.Sprintf("invalid value %q", cfg.DockerMode), dockerModeHint(), "DNSWEAVER_DOCKER_MODE=auto"))
 	}
 
 	// Parse DRY_RUN
@@ -616,4 +614,18 @@ func validateInstanceID(id string) error {
 		return fmt.Errorf("invalid format %q (must be alphanumeric, hyphens, underscores, dots; must start with alphanumeric)", id)
 	}
 	return nil
+}
+
+// dockerModes lists the accepted Docker mode values (DNSWEAVER_DOCKER_MODE /
+// docker.mode). Every validation site uses this one list.
+var dockerModes = []string{"auto", "swarm", "standalone", "both"}
+
+// isValidDockerMode reports whether mode is an accepted Docker mode value.
+func isValidDockerMode(mode string) bool {
+	return slices.Contains(dockerModes, mode)
+}
+
+// dockerModeHint is the remediation hint shown for an invalid Docker mode.
+func dockerModeHint() string {
+	return "Must be one of: " + strings.Join(dockerModes, ", ")
 }

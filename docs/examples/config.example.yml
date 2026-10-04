@@ -68,7 +68,7 @@ docker:
                                       #       /containers/json,
                                       #       /containers/{id}/json, /events
                                       # /events is opened twice in 'both' mode.
-                                      # See docs/docker/mixed-mode.md.
+                                      # See docs/deployment/mixed-mode.md.
 
 # Health and metrics server
 server:
